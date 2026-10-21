@@ -3,9 +3,7 @@ name: Compile Android APK
 on:
   workflow_dispatch:
   push:
-    branches:
-      - main
-      - master
+    branches: [main, master]
 
 permissions:
   contents: read
@@ -21,8 +19,7 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 22
-          # Do not enable npm cache here: this project has no package-lock.json yet.
+          node-version: '22'
 
       - name: Set up Java
         uses: actions/setup-java@v4
@@ -30,23 +27,34 @@ jobs:
           distribution: temurin
           java-version: '21'
 
-      - name: Set up Android SDK
-        uses: android-actions/setup-android@v3
+      # Let the next step accept SDK licenses explicitly, non-interactively.
+      - name: Set up Android SDK tools
+        uses: android-actions/setup-android@v4
         with:
-          accept-android-sdk-licenses: true
-          packages: |
-            platform-tools
-            platforms;android-35
-            build-tools;35.0.0
+          accept-android-sdk-licenses: 'false'
+          log-accepted-android-sdk-licenses: 'false'
+          packages: ''
 
-      - name: Check required project files
+      - name: Accept Android SDK licenses and install build packages
+        shell: bash
         run: |
-          set -eu
+          set +o pipefail
+          yes | sdkmanager --licenses
+          sdkmanager \
+            "platform-tools" \
+            "platforms;android-35" \
+            "build-tools;35.0.0"
+
+      - name: Validate project files
+        shell: bash
+        run: |
+          set -euo pipefail
           test -f package.json
           test -f capacitor.config.json
           test -f www/index.html
+          test -f assets/icon.png
 
-      - name: Install Node dependencies
+      - name: Install JavaScript dependencies
         run: npm install --no-audit --no-fund
 
       - name: Create Android project if missing
@@ -56,10 +64,14 @@ jobs:
             npx cap add android
           fi
 
+      - name: Generate Android app assets
+        run: npx capacitor-assets generate --android
+
       - name: Sync web app to Android
         run: npx cap sync android
 
       - name: Build debug APK
+        shell: bash
         run: |
           cd android
           chmod +x gradlew
