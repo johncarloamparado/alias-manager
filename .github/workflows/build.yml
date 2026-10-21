@@ -1,34 +1,36 @@
-name: Build Alias Manager APK
+name: Compile Android APK
 
 on:
   workflow_dispatch:
   push:
-    branches: [main, master]
+    branches:
+      - main
+      - master
 
 permissions:
   contents: read
 
 jobs:
   build-apk:
-    name: Compile Android APK
+    name: Build Alias Manager APK
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout source
+      - name: Checkout repository
         uses: actions/checkout@v4
 
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
           node-version: 22
-          cache: npm
+          # Do not enable npm cache here: this project has no package-lock.json yet.
 
-      - name: Set up Java 21
+      - name: Set up Java
         uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: '21'
 
-      - name: Set up Android SDK packages
+      - name: Set up Android SDK
         uses: android-actions/setup-android@v3
         with:
           packages: |
@@ -36,22 +38,24 @@ jobs:
             platforms;android-35
             build-tools;35.0.0
 
-      - name: Verify project files
+      - name: Check required project files
         run: |
-          set -eux
+          set -eu
           test -f package.json
           test -f capacitor.config.json
           test -f www/index.html
-          node --version
-          npm --version
 
-      - name: Install dependencies
+      - name: Install Node dependencies
         run: npm install --no-audit --no-fund
 
-      - name: Generate native Android project
-        run: npx cap add android
+      - name: Create Android project if missing
+        shell: bash
+        run: |
+          if [ ! -d android ]; then
+            npx cap add android
+          fi
 
-      - name: Sync web app into Android project
+      - name: Sync web app to Android
         run: npx cap sync android
 
       - name: Build debug APK
@@ -60,7 +64,7 @@ jobs:
           chmod +x gradlew
           ./gradlew assembleDebug --no-daemon
 
-      - name: Upload installable APK
+      - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
           name: alias-manager-debug-apk
