@@ -1,0 +1,19 @@
+{
+  "name": "alias-manager-android",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Alias Manager PWA packaged as an Android APK with Capacitor and built by GitHub Actions.",
+  "scripts": {
+    "android:init": "cap add android",
+    "android:sync": "cap sync android",
+    "android:build": "cd android && ./gradlew assembleDebug"
+  },
+  "dependencies": {
+    "@capacitor/android": "^7.4.3",
+    "@capacitor/core": "^7.4.3"
+  },
+  "devDependencies": {
+    "@capacitor/assets": "^3.0.5",
+    "@capacitor/cli": "^7.4.3"
+  }
+}
