@@ -296,35 +296,6 @@
     body.light .time-badge.idle { background: #eef0f6; color: #5a6478; }
     body.light .bulk-bar { background: #ffffff; }
 
-
-    /* Compact mode: tighter layout without shrinking controls below comfortable tap size. */
-    body.compact .app { padding: 9px 9px 76px; }
-    body.compact .header { gap: 8px; margin-bottom: 9px; }
-    body.compact .header-left { gap: 8px; }
-    body.compact .logo { width: 34px; height: 34px; border-radius: 10px; }
-    body.compact h1 { font-size: 1.05rem; }
-    body.compact .btn { padding: 7px 9px; min-height: 34px; }
-    body.compact .stats-bar { gap: 5px; margin-bottom: 9px; }
-    body.compact .stat-card { padding: 7px 5px; border-radius: 10px; }
-    body.compact .stat-val { font-size: 1rem; }
-    body.compact .toolbar { gap: 6px; margin-bottom: 7px; }
-    body.compact .search-wrap input { padding-top: 8px; padding-bottom: 8px; }
-    body.compact .filters { gap: 4px; margin-bottom: 8px; }
-    body.compact .filter-btn { padding: 5px 9px; }
-    body.compact .list { gap: 7px; }
-    body.compact .card { padding: 10px 10px 9px; border-radius: 12px; }
-    body.compact .email { font-size: .82rem; margin-bottom: 3px; }
-    body.compact .note { margin-bottom: 4px; }
-    body.compact .tags { margin-bottom: 4px; }
-    body.compact .actions { gap: 4px; margin-top: 8px; padding-top: 8px; }
-    body.compact .action-btn { padding: 6px 8px; min-height: 32px; }
-    body.compact .form-panel { padding: 12px; margin-bottom: 10px; }
-    body.compact .form-panel input, body.compact .form-panel textarea, body.compact .form-panel select { padding: 8px 10px; margin-bottom: 9px; }
-    body.compact footer { margin-top: 22px; }
-    .setting-help { display:block; color:var(--text-muted); font-size:.72rem; margin-top:3px; }
-    .sheet-row .setting-copy { flex:1; min-width:0; }
-    .sheet-row select { max-width: 58%; }
-
     @media (max-width: 480px) {
       .app { padding: 12px 10px 90px; }
       h1 { font-size: 1.1rem; }
@@ -332,13 +303,74 @@
       .action-btn { padding: 6px 8px; font-size: 0.72rem; }
       .sort-select { margin-left: 0; width: 100%; }
     }
+
+
+    /* Mobile UI refinement v2.6 */
+    html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
+    body { overflow-x: hidden; }
+    button, select, input { font: inherit; }
+    button, .btn, .filter-btn, select { touch-action: manipulation; }
+    .app { width: 100%; }
+    .header { align-items: center; gap: 10px; }
+    .header-left { min-width: 0; flex: 1 1 auto; gap: 10px; }
+    .header-left h1 { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .header-actions { flex: 0 0 auto; align-items: center; gap: 6px; }
+    .header-actions .btn { min-height: 40px; justify-content: center; }
+    .stats-bar { gap: 8px; }
+    .stat-card { min-width: 0; padding: 14px 10px; }
+    .stat-label { letter-spacing: .035em; }
+    .search-wrap input { min-height: 46px; }
+    .filters { gap: 7px; }
+    .filter-btn { min-height: 38px; padding: 8px 13px; }
+    .sort-select { min-height: 40px; }
+    .empty { padding: clamp(28px, 7vh, 56px) 18px 34px; }
+    .empty-icon { font-size: 2.4rem; }
+    .sheet-overlay { padding-top: max(12px, env(safe-area-inset-top)); }
+    .sheet { padding: 22px 18px calc(24px + env(safe-area-inset-bottom)); max-height: 88dvh; overscroll-behavior: contain; }
+    .sheet-row { align-items: center; gap: 10px; }
+    .sheet-row label { flex: 1 1 44%; min-width: 0; }
+    .sheet-row select { flex: 0 1 52%; min-width: 0; max-width: 56%; min-height: 44px; }
+    .sheet-row .btn { min-height: 42px; }
+    .sheet h3 { position: sticky; top: -22px; z-index: 2; padding: 4px 0 12px; background: var(--surface); }
+    @media (max-width: 480px) {
+      .app { padding: max(10px, env(safe-area-inset-top)) 12px calc(26px + env(safe-area-inset-bottom)); }
+      .header { flex-wrap: nowrap; margin-bottom: 14px; }
+      .logo { width: 44px; height: 44px; border-radius: 13px; }
+      h1 { font-size: clamp(.95rem, 4.3vw, 1.1rem); }
+      .header-actions { gap: 5px; }
+      .header-actions .btn { min-height: 40px; padding: 8px 9px; }
+      .stats-bar { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+      .stat-card { padding: 12px 8px; border-radius: 14px; }
+      .stat-val { font-size: 1.2rem; }
+      .stat-label { font-size: .68rem; }
+      .filters { flex-wrap: nowrap; overflow-x: auto; overflow-y: hidden; padding: 1px 1px 7px; margin-right: -2px; scrollbar-width: none; }
+      .filters::-webkit-scrollbar { display: none; }
+      .filter-btn { flex: 0 0 auto; }
+      .sort-select { width: 100%; margin: 0 0 12px; border-radius: 12px; padding: 9px 12px; }
+      .sheet-overlay { align-items: flex-end; }
+      .sheet { width: 100%; max-width: none; border-radius: 22px 22px 0 0; max-height: 86dvh; }
+      .empty { padding-top: 30px; }
+    }
+    @media (max-width: 360px) {
+      .header-left { gap: 7px; }
+      .logo { width: 38px; height: 38px; }
+      h1 { font-size: .9rem; }
+      .header-actions { gap: 4px; }
+      .header-actions .btn { padding: 7px; min-width: 36px; }
+      .header-actions .btn-primary { padding-inline: 10px; }
+      .sheet { padding-left: 15px; padding-right: 15px; }
+      .sheet-row { flex-wrap: wrap; }
+      .sheet-row label { flex-basis: 100%; }
+      .sheet-row select { flex-basis: 100%; max-width: 100%; }
+    }
+
   </style>
 </head>
 <body>
   <div class="app">
     <header class="header">
       <div class="header-left">
-        <div class="logo" aria-label="Alias Manager logo"><svg viewBox="0 0 40 40" width="30" height="30" aria-hidden="true"><path d="M7 31 16.5 8.5Q18 5.5 20 5.5t3.5 3L33 31h-7l-2.1-5.3H16L13.8 31Z" fill="#dce5ff"/><path d="M17.8 20.5h4.5l-2.2-5.8Z" fill="#7c9cff"/><rect x="21.5" y="21.5" width="11" height="7" rx="3.5" fill="#5dffb0"/><circle cx="30.5" cy="8.5" r="3" fill="#5dffb0"/></svg></div>
+        <div class="logo"><div class="logo-inner"></div></div>
         <h1>Alias Manager</h1>
       </div>
       <div class="header-actions">
@@ -446,10 +478,6 @@
         </select>
       </div>
       <div class="sheet-row">
-        <div class="setting-copy"><label for="compactSelect">App layout</label><span class="setting-help">Fit more aliases on screen while keeping buttons easy to tap.</span></div>
-        <select id="compactSelect"><option value="0">Comfortable</option><option value="1">Compact</option></select>
-      </div>
-      <div class="sheet-row">
         <label>5h Ready alerts</label>
         <select id="readyAlert">
           <option value="1" selected>On (when you open app)</option>
@@ -489,7 +517,7 @@
     let selected = {};
     let selectedColor = "";
     let deferredPrompt = null;
-    let settings = { autoRefresh: 60, theme: "dark", compact: 0, readyAlert: 1, lastBackup: 0, alertedReady: {} };
+    let settings = { autoRefresh: 60, theme: "dark", readyAlert: 1, lastBackup: 0, alertedReady: {} };
 
     const listEl = document.getElementById("list");
     const emptyEl = document.getElementById("empty");
@@ -513,8 +541,6 @@
       document.getElementById("autoRefresh").value = String(settings.autoRefresh);
       document.getElementById("themeSelect").value = settings.theme;
       document.getElementById("readyAlert").value = String(settings.readyAlert);
-      document.getElementById("compactSelect").value = settings.compact ? "1" : "0";
-      applyCompact();
       startAutoRefresh();
     }
 
@@ -588,10 +614,6 @@
     function applyTheme() {
       document.body.classList.toggle("light", settings.theme === "light");
       document.querySelector('meta[name="theme-color"]').setAttribute("content", settings.theme === "light" ? "#f0f2f8" : "#070b14");
-    }
-
-    function applyCompact() {
-      document.body.classList.toggle("compact", !!settings.compact);
     }
 
     function startAutoRefresh() {
@@ -961,11 +983,6 @@
     });
     document.getElementById("themeSelect").addEventListener("change", function (e) {
       settings.theme = e.target.value; saveSettings(); applyTheme();
-    });
-    document.getElementById("compactSelect").addEventListener("change", function (e) {
-      settings.compact = Number(e.target.value);
-      saveSettings(); applyCompact();
-      toast(settings.compact ? "Compact layout enabled" : "Comfortable layout enabled", "success");
     });
     document.getElementById("readyAlert").addEventListener("change", function (e) {
       settings.readyAlert = Number(e.target.value); saveSettings();
