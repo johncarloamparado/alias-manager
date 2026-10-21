@@ -29,6 +29,10 @@ jobs:
 
       - name: Set up Android SDK
         uses: android-actions/setup-android@v3
+        with:
+          # Avoid the obsolete standalone "tools" package, which is no longer
+          # available in current Android SDK repositories.
+          packages: 'platform-tools,platforms;android-35,build-tools;35.0.0'
 
       - name: Install JavaScript dependencies
         run: npm install --no-audit --no-fund
