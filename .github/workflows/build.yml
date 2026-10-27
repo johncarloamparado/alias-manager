@@ -70,6 +70,9 @@ jobs:
       - name: Sync web app to Android
         run: npx cap sync android
 
+      - name: Install Orbit multi-profile browser integration
+        run: python3 native_patch.py
+
       - name: Build debug APK
         shell: bash
         run: |
