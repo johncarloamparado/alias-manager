@@ -19,9 +19,9 @@ if not m:
 pkg = m.group(1)
 pkg_path = Path(*pkg.split('.'))
 dest = android / 'app/src/main/java' / pkg_path
-native_src = root / 'native' / 'kotlin'
+native_src = root / 'native' / 'java'
 dest.mkdir(parents=True, exist_ok=True)
-for name in ('OrbitBrowserPlugin.kt', 'OrbitBrowserActivity.kt'):
+for name in ('OrbitBrowserPlugin.java', 'OrbitBrowserActivity.java'):
     src = native_src / name
     out = dest / name
     out.write_text(src.read_text().replace('__PACKAGE__', pkg))
@@ -29,7 +29,7 @@ for name in ('OrbitBrowserPlugin.kt', 'OrbitBrowserActivity.kt'):
 # Register the Capacitor plugin in MainActivity.
 if 'OrbitBrowserPlugin' not in text:
     if main.suffix == '.kt':
-        text = f'''package {pkg}\n\nimport android.os.Bundle\nimport com.getcapacitor.BridgeActivity\nimport {pkg}.OrbitBrowserPlugin\n\nclass MainActivity : BridgeActivity() {{\n    override fun onCreate(savedInstanceState: Bundle?) {{\n        registerPlugin(OrbitBrowserPlugin::class.java)\n        super.onCreate(savedInstanceState)\n    }}\n}}\n'''
+        text = f'''package {pkg}\n\nimport android.os.Bundle\nimport com.getcapacitor.BridgeActivity\nimport {pkg}.OrbitBrowserPlugin\n\nclass MainActivity : BridgeActivity() {{\n    override fun onCreate(savedInstanceState: Bundle?) {{\n        registerPlugin({pkg}.OrbitBrowserPlugin::class.java)\n        super.onCreate(savedInstanceState)\n    }}\n}}\n'''
     else:
         text = f'''package {pkg};\n\nimport android.os.Bundle;\nimport com.getcapacitor.BridgeActivity;\n\npublic class MainActivity extends BridgeActivity {{\n    @Override\n    protected void onCreate(Bundle savedInstanceState) {{\n        registerPlugin({pkg}.OrbitBrowserPlugin.class);\n        super.onCreate(savedInstanceState);\n    }}\n}}\n'''
     main.write_text(text)
