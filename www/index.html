@@ -364,6 +364,17 @@
       .sheet-row select { flex-basis: 100%; max-width: 100%; }
     }
 
+
+    .orbit-browser-banner {
+      display:flex; align-items:center; justify-content:space-between; gap:12px;
+      margin: 12px 0 16px; padding: 13px 14px; border: 1px solid rgba(179,136,255,.28);
+      border-radius: 14px; background: linear-gradient(110deg, rgba(124,156,255,.12), rgba(179,136,255,.09));
+    }
+    .orbit-browser-copy { min-width:0; }
+    .orbit-browser-copy strong { display:block; font-size:14px; margin-bottom:2px; }
+    .orbit-browser-copy span { display:block; color:var(--text-muted); font-size:12px; }
+    #btnOrbitBrowser { flex:0 0 auto; white-space:nowrap; }
+
   </style>
 </head>
 <body>
@@ -380,6 +391,15 @@
         <button class="btn btn-ghost" id="btnSettings" title="Settings">⚙</button>
       </div>
     </header>
+
+
+    <section class="orbit-browser-banner" aria-label="Orbit multi-profile browser">
+      <div class="orbit-browser-copy">
+        <strong>Orbit Browser</strong>
+        <span>Separate website profiles · one active page to save memory</span>
+      </div>
+      <button class="btn btn-primary" id="btnOrbitBrowser">🌐 Open</button>
+    </section>
 
     <div class="install-banner" id="installBanner">
       <p>Install as app for faster access (Home Screen)</p>
@@ -1059,6 +1079,21 @@
     });
     document.getElementById("btnDismissInstall").addEventListener("click", function () {
       document.getElementById("installBanner").classList.remove("show");
+    });
+
+
+    // Native Android browser integration. Isolated profiles require the installed Android WebView to support MULTI_PROFILE.
+    document.getElementById("btnOrbitBrowser").addEventListener("click", async function () {
+      try {
+        const plugin = window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.OrbitBrowser;
+        if (plugin && typeof plugin.open === "function") {
+          await plugin.open();
+        } else {
+          toast("Orbit Browser works in the installed Android APK. Build the updated project first.", "error");
+        }
+      } catch (err) {
+        toast("Could not open Orbit Browser: " + (err && err.message ? err.message : "unknown error"), "error");
+      }
     });
 
     loadSettings();
