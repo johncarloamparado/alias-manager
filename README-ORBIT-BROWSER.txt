@@ -13,7 +13,7 @@ What this adds
 Build behavior
 --------------
 The repository creates the Android project during GitHub Actions. After `npx cap sync android`,
-`native_patch.py` installs the Kotlin plugin/activity, adds the AndroidX WebKit dependency, registers
+`native_patch.py` installs the Java plugin/activity (native/java/), adds the AndroidX WebKit dependency, registers
 the plugin, and declares the Activity.
 
 How to build
@@ -36,3 +36,32 @@ Important compatibility notes
 - Inactive WebViews are destroyed on profile switch to reduce RAM; each profile's website data persists.
   The page itself reloads when you switch back, so unsaved page state may be lost.
 - Profile removal/data-wipe UI is intentionally not included yet to avoid accidental deletion of login data.
+
+Implementation used: JAVA only (native/java/). The old Kotlin copy was removed because the generated
+Capacitor project is Java-only and does not compile .kt files (this caused the OrbitBrowserPlugin
+"cannot find symbol" build error).
+native_patch.py is idempotent and checks, before Gradle runs, that the plugin sits in the same
+folder/package as MainActivity, is registered once, and that the manifest/gradle are patched once.
+After the build, the workflow also checks that the APK really contains the latest index.html and the
+Orbit classes.
+Status: NOT build-verified in my environment (Android SDK/AndroidX were not reachable). Run the workflow.
+
+Ready notifications
+-------------------
+OrbitReminderReceiver.java schedules an Android alarm for when each running 5h timer ends and shows a
+"Ready" notification. Needs the notification permission on Android 13+ (the app asks). Alarms are inexact
+(may be a few minutes late). After a phone reboot they are re-created automatically (BOOT_COMPLETED);
+reminders that finished while the phone was off are shown right after boot.
+Turn off with Settings > Ready alerts.
+
+Profile management (⋯ button in Orbit)
+--------------------------------------
+Rename, emoji, color, and Delete (with a confirmation dialog). Renaming only changes the label: each
+profile keeps a fixed internal WebView key, so the login is kept. Delete erases that profile's cookies and
+site data on this phone (not the Claude account or chats) and removes its alias link. The last profile can't
+be deleted. If the data can't be erased, the profile is kept and an error is shown.
+
+Auto-start toggle
+-----------------
+Alias Manager > Settings > "Orbit auto-start timer" (On/Off). When Off, Orbit still remembers chats it sees
+but does not start any timer (the toolbar shows "auto-start OFF"). Use "▶ Start" manually.
