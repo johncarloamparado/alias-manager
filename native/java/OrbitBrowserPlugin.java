@@ -52,11 +52,28 @@ public class OrbitBrowserPlugin extends Plugin {
         }
     }
 
+    /** Keeps a copy of the alias list for Orbit, so Orbit never depends only on the Intent it was opened with. */
+    @PluginMethod
+    public void syncAliases(PluginCall call) {
+        try {
+            JSArray list = call.getArray("aliases");
+            getContext().getSharedPreferences("orbit_profiles", Context.MODE_PRIVATE)
+                .edit().putString("aliases_json", list == null ? "[]" : list.toString()).commit();
+            call.resolve();
+        } catch (Exception e) {
+            call.reject("Unable to sync aliases: " + e.getMessage());
+        }
+    }
+
     @PluginMethod
     public void open(PluginCall call) {
         try {
             Intent intent = new Intent(getContext(), OrbitBrowserActivity.class);
             JSArray aliases = call.getArray("aliases");
+            if (aliases != null) {
+                getContext().getSharedPreferences("orbit_profiles", Context.MODE_PRIVATE)
+                    .edit().putString("aliases_json", aliases.toString()).commit();
+            }
             intent.putExtra("aliases", aliases == null ? "[]" : aliases.toString());
             intent.putExtra("autoStart", call.getBoolean("autoStart", true));
             String aliasId = call.getString("aliasId");

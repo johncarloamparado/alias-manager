@@ -5,7 +5,10 @@ import android.app.AlertDialog;
 import android.content.Context;
 import android.graphics.Color;
 import android.net.Uri;
+import android.os.Build;
 import android.os.Bundle;
+import android.view.View;
+import android.view.WindowInsets;
 import android.view.Gravity;
 import android.view.inputmethod.EditorInfo;
 import android.view.inputmethod.InputMethodManager;
@@ -71,6 +74,20 @@ public class OrbitBrowserActivity extends Activity {
     // Aliases handed over by Alias Manager: {id, email}. Links are stored as profileName -> aliasId.
     private final List<String[]> aliases = new ArrayList<>();
     private JSONObject links = new JSONObject();
+    // ---- Gmail view (own isolated profile, kept alive while you switch back to Claude) ----
+    private static final String MAIL_KEY = "orbit_mail_inbox";
+    private static final String MAIL_URL = "https://mail.google.com/";
+    private static final Pattern LOGIN_URL = Pattern.compile("^https://claude\\.ai/(login|signup)");
+    private WebView mailView;
+    private boolean mailMode = false;
+    private TextView mailBtn;
+    private LinearLayout addressRow;
+    private HorizontalScrollView tabScroll;
+    private boolean compact = false;      // true = address bar + status line hidden (more room for the chat)
+    private String aliasDebug = "";
+    private String[] pendingLink = null; // alias (id,email) Alias Manager asked for, with no profile linked yet
+    private long lastFillAt = 0;
+    private final Set<String> loginHinted = new LinkedHashSet<>();
 
     @Override public void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
@@ -78,8 +95,10 @@ public class OrbitBrowserActivity extends Activity {
         getWindow().setNavigationBarColor(Color.rgb(12, 15, 24));
         prefs = getSharedPreferences("orbit_profiles", Context.MODE_PRIVATE);
         profileSupported = WebViewFeature.isFeatureSupported(WebViewFeature.MULTI_PROFILE);
+        compact = prefs.getBoolean("compact", false);
         autoStart = getIntent().getBooleanExtra("autoStart", true); loadAliases(); loadProfiles(); loadLinks(); loadMeta(); applyRequestedAlias(); buildUi();
         if (profileSupported) showProfile(activeProfile); else showUnsupported();
+        if (pendingLink != null) offerLink();
     }
     private void loadProfiles() {
         String saved = prefs.getString("profiles", "Account 1");
@@ -92,15 +111,37 @@ public class OrbitBrowserActivity extends Activity {
     }
     private void loadAliases() {
         aliases.clear();
+        int fromIntent = parseAliases(getIntent().getStringExtra("aliases"), aliases);
+        int fromSaved = 0;
+        if (fromIntent == 0) { // fall back to the copy Alias Manager keeps in sync
+            fromSaved = parseAliases(prefs.getString("aliases_json", null), aliases);
+        }
+        aliasDebug = "(from open: " + fromIntent + ", saved copy: " + fromSaved + ")";
+    }
+    /** Adds valid {id,email} entries to out and returns how many. A missing id falls back to the email. */
+    private int parseAliases(String raw, List<String[]> out) {
+        int n = 0;
+        if (raw == null) return 0;
         try {
-            String raw = getIntent().getStringExtra("aliases");
-            JSONArray arr = new JSONArray(raw == null ? "[]" : raw);
+            JSONArray arr = new JSONArray(raw);
             for (int i = 0; i < arr.length(); i++) {
-                JSONObject o = arr.getJSONObject(i);
-                String id = o.optString("id", ""), email = o.optString("email", "");
-                if (!id.isEmpty() && !email.isEmpty()) { aliases.add(new String[]{id, email}); long lu = o.optLong("lastUsed", 0); if (lu > 0) started.put(id, lu); }
+                JSONObject o = arr.optJSONObject(i);
+                if (o == null) continue;
+                String email = o.optString("email", "").trim();
+                String id = o.optString("id", "").trim();
+                if (email.isEmpty()) continue;
+                if (id.isEmpty()) id = email;
+                out.add(new String[]{id, email}); n++;
+                long lu = o.optLong("lastUsed", 0);
+                if (lu > 0) { Long old = started.get(id); if (old == null || lu > old) started.put(id, lu); }
             }
         } catch (Exception ignored) { }
+        return n;
+    }
+    /** Re-read the saved alias list (Alias Manager updates it every time something changes). */
+    private void reloadAliases() {
+        List<String[]> fresh = new ArrayList<>();
+        if (parseAliases(prefs.getString("aliases_json", null), fresh) > 0) { aliases.clear(); aliases.addAll(fresh); }
     }
     /** If Alias Manager asked for a specific alias, start on the profile linked to it. */
     private void applyRequestedAlias() {
@@ -110,15 +151,29 @@ public class OrbitBrowserActivity extends Activity {
         if (p != null && profileNames.contains(p)) { activeProfile = p; saveProfiles(); return; }
         String email = "this alias";
         for (String[] a : aliases) if (a[0].equals(want)) email = a[1];
-        Toast.makeText(this, "No profile is linked to " + email + " yet. Pick a profile, then tap 🔗 Alias.", Toast.LENGTH_LONG).show();
+        pendingLink = new String[]{want, email}; // asked after the screen is built (offerLink)
+    }
+    /** Alias Manager opened Orbit for an alias that has no profile yet: offer to link it to the profile on screen. */
+    private void offerLink() {
+        final String[] pl = pendingLink; pendingLink = null;
+        if (pl == null || isFinishing()) return;
+        final String profile = activeProfile;
+        new AlertDialog.Builder(this).setTitle("Link " + pl[1] + "?")
+            .setMessage("No profile is linked to this alias yet.\n\nLink it to \"" + profile + "\"? (If it is another account, tap Not now, pick that tab, then tap 🔗.)")
+            .setPositiveButton("Link", (d, w) -> {
+                try { String other = profileLinkedTo(pl[0]); if (other != null) links.remove(other); links.put(profile, pl[0]); saveLinks(); } catch (Exception ignored) { }
+                refreshStatus();
+                if (webView != null) maybeFillEmail(webView, webView.getUrl(), profile);
+            }).setNegativeButton("Not now", null).show();
     }
     private void manageProfile() {
         final String name = activeProfile;
-        String[] items = {"Rename", "Change emoji", "Change color", "Delete profile…"};
+        String[] items = {compact ? "Show address bar" : "Hide address bar (more room for chat)", "Rename", "Change emoji", "Change color", "Delete profile…"};
         new AlertDialog.Builder(this).setTitle(name).setItems(items, (d, which) -> {
-            if (which == 0) askRename(name);
-            else if (which == 1) pickEmoji(name);
-            else if (which == 2) pickColor(name);
+            if (which == 0) { compact = !compact; prefs.edit().putBoolean("compact", compact).apply(); applyCompact(); }
+            else if (which == 1) askRename(name);
+            else if (which == 2) pickEmoji(name);
+            else if (which == 3) pickColor(name);
             else confirmDelete(name);
         }).setNegativeButton("Close", null).show();
     }
@@ -225,18 +280,25 @@ public class OrbitBrowserActivity extends Activity {
     }
     private String who() {
         String e = linkedEmail(activeProfile);
-        return "Profile: " + activeProfile + (e != null ? " → " + e : " (no alias linked)") + timerText(activeProfile) + (autoStart ? "" : " • auto-start OFF");
+        if (mailMode) return "✉ Gmail • claude.ai links open in " + activeProfile + (e != null ? " → " + e : "");
+        return "Profile: " + activeProfile + (e != null ? " → " + e : " (no alias linked - tap 🔗)") + timerText(activeProfile) + (autoStart ? "" : " • auto-start OFF");
     }
     private void refreshStatus() {
         if (status != null) status.setText(who() + (statusSuffix.isEmpty() ? "" : " • " + statusSuffix));
     }
+    private void goBack() {
+        if (mailMode) { if (mailView != null && mailView.canGoBack()) mailView.goBack(); else exitMail(); return; }
+        if (webView != null && webView.canGoBack()) webView.goBack();
+    }
     @Override public void onBackPressed() {
+        if (mailMode) { goBack(); return; }
         if (webView != null && webView.canGoBack()) webView.goBack(); else super.onBackPressed();
     }
-    @Override protected void onResume() { super.onResume(); ticker.removeCallbacks(tick); ticker.post(tick); }
+    @Override protected void onResume() { super.onResume(); reloadAliases(); refreshStatus(); ticker.removeCallbacks(tick); ticker.post(tick); }
     @Override protected void onPause() { ticker.removeCallbacks(tick); super.onPause(); }
     private void linkAlias() {
-        if (aliases.isEmpty()) { showMessage("No aliases found. Add an email in Alias Manager first, then open Orbit Browser again."); return; }
+        reloadAliases();
+        if (aliases.isEmpty()) { showMessage("No aliases found. Add an email in Alias Manager first, then open Orbit Browser again.\n\n" + aliasDebug); return; }
         final String profile = activeProfile;
         final String[] items = new String[aliases.size() + 1];
         items[0] = "— No alias —";
@@ -257,6 +319,7 @@ public class OrbitBrowserActivity extends Activity {
                 saveLinks();
             } catch (Exception ignored) { }
             refreshStatus();
+            if (which > 0 && webView != null) maybeFillEmail(webView, webView.getUrl(), profile);
         }).setNegativeButton("Cancel", null).show();
     }
     private String profileLinkedTo(String aliasId) {
@@ -317,55 +380,163 @@ public class OrbitBrowserActivity extends Activity {
     }
     private TextView button(String text, Runnable action) {
         TextView t = new TextView(this); t.setText(text); t.setTextSize(13); t.setGravity(Gravity.CENTER); t.setTextColor(Color.WHITE);
-        t.setPadding(dp(12),dp(10),dp(12),dp(10)); t.setBackgroundColor(Color.rgb(39,45,64)); t.setClickable(true); t.setFocusable(true); t.setOnClickListener(v -> action.run()); return t;
+        t.setPadding(dp(10),dp(6),dp(10),dp(6)); t.setBackgroundColor(Color.rgb(39,45,64)); t.setClickable(true); t.setFocusable(true); t.setOnClickListener(v -> action.run()); return t;
+    }
+    private TextView iconButton(String text, Runnable action) {
+        TextView t = button(text, action); t.setTextSize(16); t.setPadding(0,0,0,0); return t;
     }
     private void buildUi() {
         root = new LinearLayout(this); root.setOrientation(LinearLayout.VERTICAL); root.setBackgroundColor(Color.rgb(12,15,24));
-        LinearLayout header = new LinearLayout(this); header.setGravity(Gravity.CENTER_VERTICAL); header.setPadding(dp(12),dp(8),dp(12),dp(8)); header.setBackgroundColor(Color.rgb(19,23,36));
-        header.addView(label("◈  ORBIT BROWSER",16), new LinearLayout.LayoutParams(0,dp(42),1));
-        header.addView(button("🔗 Alias", this::linkAlias)); header.addView(button("＋ Account", this::addProfile)); header.addView(button("⋯", this::manageProfile)); header.addView(button("✕", this::finish), new LinearLayout.LayoutParams(dp(44),dp(42))); root.addView(header);
-        HorizontalScrollView scroll = new HorizontalScrollView(this); scroll.setHorizontalScrollBarEnabled(false); scroll.setBackgroundColor(Color.rgb(16,20,31));
-        tabs = new LinearLayout(this); tabs.setPadding(dp(8),dp(8),dp(8),dp(8)); scroll.addView(tabs); root.addView(scroll,new LinearLayout.LayoutParams(-1,dp(54)));
-        LinearLayout addressRow = new LinearLayout(this); addressRow.setGravity(Gravity.CENTER_VERTICAL); addressRow.setPadding(dp(10),dp(6),dp(10),dp(6));
-        address = new EditText(this); address.setSingleLine(true); address.setTextSize(14); address.setTextColor(Color.WHITE); address.setHintTextColor(Color.LTGRAY); address.setHint("https://claude.ai/"); address.setText("https://claude.ai/"); address.setPadding(dp(12),0,dp(12),0); address.setBackgroundColor(Color.rgb(25,29,43)); address.setImeOptions(EditorInfo.IME_ACTION_GO);
+        // Keep the toolbar clear of the status bar / navigation bar / keyboard (Android 15 draws edge-to-edge).
+        root.setOnApplyWindowInsetsListener((v, insets) -> {
+            int l, t, r, b;
+            if (Build.VERSION.SDK_INT >= 30) {
+                android.graphics.Insets i = insets.getInsets(WindowInsets.Type.systemBars() | WindowInsets.Type.displayCutout() | WindowInsets.Type.ime());
+                l = i.left; t = i.top; r = i.right; b = i.bottom;
+            } else {
+                l = insets.getSystemWindowInsetLeft(); t = insets.getSystemWindowInsetTop(); r = insets.getSystemWindowInsetRight(); b = insets.getSystemWindowInsetBottom();
+            }
+            v.setPadding(l, t, r, b);
+            return insets;
+        });
+        // Row 1: account tabs (scroll) + small icon buttons.   🔗 alias   ✉ Gmail   ＋ account   ⋯ manage   ✕ close
+        LinearLayout top = new LinearLayout(this); top.setGravity(Gravity.CENTER_VERTICAL); top.setBackgroundColor(Color.rgb(19,23,36));
+        tabScroll = new HorizontalScrollView(this); tabScroll.setHorizontalScrollBarEnabled(false);
+        tabs = new LinearLayout(this); tabs.setGravity(Gravity.CENTER_VERTICAL); tabs.setPadding(dp(4),dp(4),dp(4),dp(4)); tabScroll.addView(tabs);
+        top.addView(tabScroll, new LinearLayout.LayoutParams(0,dp(40),1));
+        mailBtn = iconButton("✉", this::toggleMail);
+        TextView[] icons = { iconButton("🔗", this::linkAlias), mailBtn, iconButton("＋", this::addProfile), iconButton("⋯", this::manageProfile), iconButton("✕", this::finish) };
+        for (TextView ic : icons) { LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(dp(36),dp(40)); lp.setMargins(dp(1),0,0,0); top.addView(ic, lp); }
+        root.addView(top);
+        // Row 2: back / address / go / reload (can be hidden from ⋯)
+        addressRow = new LinearLayout(this); addressRow.setGravity(Gravity.CENTER_VERTICAL); addressRow.setPadding(dp(6),dp(3),dp(6),dp(3)); addressRow.setBackgroundColor(Color.rgb(16,20,31));
+        address = new EditText(this); address.setSingleLine(true); address.setTextSize(13); address.setTextColor(Color.WHITE); address.setHintTextColor(Color.LTGRAY); address.setHint("https://claude.ai/"); address.setText("https://claude.ai/"); address.setMinHeight(0); address.setMinimumHeight(0); address.setPadding(dp(10),0,dp(10),0); address.setBackgroundColor(Color.rgb(25,29,43)); address.setImeOptions(EditorInfo.IME_ACTION_GO);
         address.setOnEditorActionListener((v,id,event)-> { if (id == EditorInfo.IME_ACTION_GO) { navigate(address.getText().toString()); return true; } return false; });
-        addressRow.addView(button("◀",()->{if(webView!=null&&webView.canGoBack())webView.goBack();}),new LinearLayout.LayoutParams(dp(46),dp(44))); addressRow.addView(address,new LinearLayout.LayoutParams(0,dp(44),1)); addressRow.addView(button("Go",()->navigate(address.getText().toString())),new LinearLayout.LayoutParams(dp(56),dp(44))); addressRow.addView(button("↻",()->{if(webView!=null)webView.reload();}),new LinearLayout.LayoutParams(dp(46),dp(44))); root.addView(addressRow);
-        status = label(who(),12); status.setPadding(dp(12),dp(5),dp(12),dp(5)); status.setTextColor(Color.rgb(155,165,188)); root.addView(status);
-        webHost = new FrameLayout(this); webHost.setBackgroundColor(Color.WHITE); root.addView(webHost,new LinearLayout.LayoutParams(-1,0,1)); setContentView(root); renderTabs();
+        addressRow.addView(button("◀",this::goBack),new LinearLayout.LayoutParams(dp(38),dp(34))); LinearLayout.LayoutParams alp = new LinearLayout.LayoutParams(0,dp(34),1); alp.setMargins(dp(3),0,dp(3),0); addressRow.addView(address,alp); addressRow.addView(button("Go",()->navigate(address.getText().toString())),new LinearLayout.LayoutParams(dp(44),dp(34))); LinearLayout.LayoutParams rlp = new LinearLayout.LayoutParams(dp(38),dp(34)); rlp.setMargins(dp(3),0,0,0); addressRow.addView(button("↻",()->{ WebView c=cur(); if(c!=null)c.reload(); }),rlp); root.addView(addressRow);
+        // Row 3: one small status line
+        status = label(who(),10.5f); status.setSingleLine(true); status.setEllipsize(android.text.TextUtils.TruncateAt.END); status.setPadding(dp(10),dp(2),dp(10),dp(3)); status.setTextColor(Color.rgb(155,165,188)); status.setBackgroundColor(Color.rgb(16,20,31)); root.addView(status);
+        webHost = new FrameLayout(this); webHost.setBackgroundColor(Color.WHITE); root.addView(webHost,new LinearLayout.LayoutParams(-1,0,1)); setContentView(root); renderTabs(); applyCompact(); root.requestApplyInsets();
     }
+    private void applyCompact() {
+        int vis = compact ? View.GONE : View.VISIBLE;
+        if (addressRow != null) addressRow.setVisibility(vis);
+        if (status != null) status.setVisibility(vis);
+    }
+    private WebView cur() { return mailMode && mailView != null ? mailView : webView; }
     private void renderTabs() {
         tabs.removeAllViews();
+        TextView activeTab = null;
         for (String name : profileNames) { final String selectedName=name; boolean on=name.equals(activeProfile); String em=emojiOf(name);
-            TextView b=button("",()->switchProfile(selectedName));
+            TextView b=button("",()->switchProfile(selectedName)); b.setTextSize(12);
             SpannableString sp=new SpannableString("●  "+(em.isEmpty()?"":em+" ")+name); sp.setSpan(new ForegroundColorSpan(on?Color.WHITE:colorOf(name)),0,1,Spanned.SPAN_EXCLUSIVE_EXCLUSIVE); b.setText(sp);
-            b.setBackgroundColor(on?colorOf(name):Color.rgb(31,36,52)); LinearLayout.LayoutParams lp=new LinearLayout.LayoutParams(-2,dp(38)); lp.setMargins(dp(3),0,dp(3),0); tabs.addView(b,lp); }
+            b.setBackgroundColor(on?colorOf(name):Color.rgb(31,36,52)); LinearLayout.LayoutParams lp=new LinearLayout.LayoutParams(-2,dp(32)); lp.setMargins(dp(2),0,dp(2),0); tabs.addView(b,lp); if(on) activeTab=b; }
+        final TextView at = activeTab;
+        if (at != null && tabScroll != null) tabScroll.post(() -> tabScroll.smoothScrollTo(Math.max(0, at.getLeft() - dp(8)), 0));
     }
-    private void addProfile() { int i=1; while(profileNames.contains("Account "+i)) i++; String name="Account "+i; profileNames.add(name); activeProfile=name; try{ keys.put(name,"orbit_"+java.util.UUID.randomUUID().toString().replace("-","").substring(0,10)); }catch(Exception ignored){} saveMeta(); saveProfiles(); renderTabs(); if(profileSupported)showProfile(name); }
-    private void switchProfile(String name) { if(name.equals(activeProfile))return; activeProfile=name; saveProfiles(); renderTabs(); if(profileSupported)showProfile(name); }
+    // ---- Gmail: see verification emails inside the app. claude.ai links tapped there open in the ACTIVE Claude profile. ----
+    private void toggleMail() {
+        if (mailMode) { exitMail(); return; }
+        if (!profileSupported) { showMessage("Gmail view needs an updated Android System WebView (isolated profiles)."); return; }
+        try {
+            if (mailView == null) createMailView();
+            mailMode = true;
+            if (webView != null) webView.setVisibility(View.GONE);
+            mailView.setVisibility(View.VISIBLE);
+            mailBtn.setBackgroundColor(PURPLE);
+            String u = mailView.getUrl(); address.setText(u == null ? MAIL_URL : u);
+            refreshStatus();
+        } catch (Exception e) { mailMode = false; showMessage("Could not open Gmail: " + e.getMessage()); }
+    }
+    private void exitMail() {
+        mailMode = false;
+        if (mailView != null) mailView.setVisibility(View.GONE);
+        if (webView != null) { webView.setVisibility(View.VISIBLE); String u = webView.getUrl(); if (u != null) address.setText(u); }
+        if (mailBtn != null) mailBtn.setBackgroundColor(Color.rgb(39,45,64));
+        refreshStatus();
+    }
+    private void createMailView() {
+        WebView view = new WebView(this);
+        WebViewCompat.setProfile(view, MAIL_KEY);
+        view.getSettings().setJavaScriptEnabled(true); view.getSettings().setDomStorageEnabled(true);
+        view.getSettings().setJavaScriptCanOpenWindowsAutomatically(false); view.getSettings().setSupportMultipleWindows(false);
+        try { android.webkit.CookieManager.getInstance().setAcceptThirdPartyCookies(view, true); } catch (Exception ignored) { }
+        view.setWebChromeClient(new WebChromeClient());
+        view.setWebViewClient(new WebViewClient() {
+            @Override public boolean shouldOverrideUrlLoading(WebView v, WebResourceRequest req) {
+                Uri u = req.getUrl(); String scheme = u.getScheme();
+                if (!"http".equals(scheme) && !"https".equals(scheme)) return true;
+                if (!req.isForMainFrame()) return false;
+                Uri target = unwrapRedirect(u);
+                String host = target.getHost();
+                if (host != null && (host.equals("claude.ai") || host.endsWith(".claude.ai"))) { openInClaude(target.toString()); return true; }
+                return false;
+            }
+            @Override public void onPageStarted(WebView v, String url, android.graphics.Bitmap icon) { super.onPageStarted(v, url, icon); if (mailMode && url != null) address.setText(url); }
+        });
+        webHost.addView(view, new FrameLayout.LayoutParams(-1,-1));
+        mailView = view;
+        view.loadUrl(MAIL_URL);
+    }
+    /** Gmail wraps links as google.com/url?q=<real link>. Return the real link. */
+    private Uri unwrapRedirect(Uri u) {
+        try {
+            String h = u.getHost();
+            if (h != null && h.endsWith("google.com") && "/url".equals(u.getPath())) {
+                String q = u.getQueryParameter("q"); if (q == null) q = u.getQueryParameter("url");
+                if (q != null && q.startsWith("http")) return Uri.parse(q);
+            }
+        } catch (Exception ignored) { }
+        return u;
+    }
+    private void openInClaude(String url) {
+        exitMail();
+        if (webView == null) return;
+        String e = linkedEmail(activeProfile);
+        address.setText(url); webView.loadUrl(url);
+        Toast.makeText(this, "Opening in " + activeProfile + (e != null ? " → " + e : ""), Toast.LENGTH_SHORT).show();
+    }
+    /** On claude.ai/login, put this profile's linked alias in the email box (you still tap Continue yourself). */
+    private void maybeFillEmail(final WebView v, String url, String forProfile) {
+        if (url == null || forProfile == null || !LOGIN_URL.matcher(url).find()) return;
+        String email = linkedEmail(forProfile);
+        if (email == null) {
+            if (!aliases.isEmpty() && !isFinishing() && loginHinted.add(forProfile) && forProfile.equals(activeProfile)) linkAlias(); // pick the alias to sign in with
+            return;
+        }
+        long now = System.currentTimeMillis();
+        if (now - lastFillAt < 1500) return;
+        lastFillAt = now;
+        final String js = "(function(){try{var e=" + JSONObject.quote(email) + ";var i=document.querySelector('input[type=\"email\"],input[name=\"email\"],input[autocomplete=\"email\"]');if(!i||i.value)return 0;var d=Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value');d.set.call(i,e);i.dispatchEvent(new Event('input',{bubbles:true}));i.dispatchEvent(new Event('change',{bubbles:true}));return 1;}catch(x){return 0;}})()";
+        int[] delays = {300, 1200, 2500};
+        for (int dly : delays) ticker.postDelayed(() -> { if (v == webView) v.evaluateJavascript(js, null); }, dly);
+    }
+    private void addProfile() { if(mailMode)exitMail(); int i=1; while(profileNames.contains("Account "+i)) i++; String name="Account "+i; profileNames.add(name); activeProfile=name; try{ keys.put(name,"orbit_"+java.util.UUID.randomUUID().toString().replace("-","").substring(0,10)); }catch(Exception ignored){} saveMeta(); saveProfiles(); renderTabs(); if(profileSupported)showProfile(name); }
+    private void switchProfile(String name) { if(mailMode)exitMail(); if(name.equals(activeProfile))return; activeProfile=name; saveProfiles(); renderTabs(); if(profileSupported)showProfile(name); }
     private String profileKey(String name) { return "orbit_"+name.toLowerCase().replaceAll("[^a-z0-9]+","_").replaceAll("^_+|_+$",""); }
     private void showProfile(String name) {
         try {
+            if(mailMode) exitMail();
             if(webView!=null){ webHost.removeView(webView); webView.stopLoading(); webView.loadUrl("about:blank"); webView.destroy(); webView=null; }
             lastUrl = null;
             final String profileKeyAtCreate = keyOf(name);
             WebView view=new WebView(this); WebViewCompat.setProfile(view,keyOf(name)); view.getSettings().setJavaScriptEnabled(true); view.getSettings().setDomStorageEnabled(true); view.getSettings().setLoadsImagesAutomatically(true); view.getSettings().setJavaScriptCanOpenWindowsAutomatically(false); view.getSettings().setSupportMultipleWindows(false); view.setWebChromeClient(new WebChromeClient());
             view.setWebViewClient(new WebViewClient(){
                 @Override public boolean shouldOverrideUrlLoading(WebView v, WebResourceRequest req){ String scheme=req.getUrl().getScheme(); return !("http".equals(scheme)||"https".equals(scheme)); }
-                @Override public void doUpdateVisitedHistory(WebView v, String url, boolean isReload){ super.doUpdateVisitedHistory(v,url,isReload); String cur=nameOfKey(profileKeyAtCreate); if(cur!=null) onUrlChanged(cur,url); }
-                @Override public void onPageStarted(WebView v,String url,android.graphics.Bitmap icon){ super.onPageStarted(v,url,icon); if(url!=null)address.setText(url); statusSuffix="Loading…"; refreshStatus(); }
-                @Override public void onPageFinished(WebView v,String url){ super.onPageFinished(v,url); statusSuffix="Session isolated"; refreshStatus(); }
+                @Override public void doUpdateVisitedHistory(WebView v, String url, boolean isReload){ super.doUpdateVisitedHistory(v,url,isReload); String who=nameOfKey(profileKeyAtCreate); if(who!=null){ onUrlChanged(who,url); maybeFillEmail(v,url,who); } }
+                @Override public void onPageStarted(WebView v,String url,android.graphics.Bitmap icon){ super.onPageStarted(v,url,icon); if(url!=null&&!mailMode)address.setText(url); statusSuffix="Loading…"; refreshStatus(); }
+                @Override public void onPageFinished(WebView v,String url){ super.onPageFinished(v,url); statusSuffix="Session isolated"; refreshStatus(); maybeFillEmail(v,url,nameOfKey(profileKeyAtCreate)); }
             });
-            webView=view; webHost.removeAllViews(); webHost.addView(view,new FrameLayout.LayoutParams(-1,-1)); address.setText("https://claude.ai/"); view.loadUrl("https://claude.ai/"); renderTabs();
+            webView=view; webHost.addView(view,0,new FrameLayout.LayoutParams(-1,-1)); address.setText("https://claude.ai/"); view.loadUrl("https://claude.ai/"); renderTabs();
         } catch(Exception e){ statusSuffix="Unable to create isolated profile"; refreshStatus(); showMessage("Could not open profile. Update Android System WebView and try again.\n\n"+e.getMessage()); }
     }
     private void navigate(String raw) {
         String url=raw.trim(); if(url.isEmpty())return; if(!url.contains("://"))url="https://"+url; Uri uri=Uri.parse(url);
         if(!"https".equals(uri.getScheme())&& !"http".equals(uri.getScheme())){showMessage("Only HTTP and HTTPS pages are supported.");return;}
-        address.setText(url); InputMethodManager imm=(InputMethodManager)getSystemService(Context.INPUT_METHOD_SERVICE); if(imm!=null)imm.hideSoftInputFromWindow(address.getWindowToken(),0); if(webView!=null)webView.loadUrl(url);
+        address.setText(url); InputMethodManager imm=(InputMethodManager)getSystemService(Context.INPUT_METHOD_SERVICE); if(imm!=null)imm.hideSoftInputFromWindow(address.getWindowToken(),0); WebView c=cur(); if(mailMode){ String h=uri.getHost(); if(h!=null&&(h.equals("claude.ai")||h.endsWith(".claude.ai"))){ openInClaude(url); return; } } if(c!=null)c.loadUrl(url);
     }
     private void showUnsupported() {
         webHost.removeAllViews(); TextView msg=new TextView(this); msg.setText("Isolated browser profiles are not supported by the installed Android System WebView.\n\nUpdate Android System WebView from Google Play, then reopen Orbit Browser. No shared-session fallback is used, so accounts won't accidentally share cookies."); msg.setTextSize(17); msg.setTextColor(Color.DKGRAY); msg.setGravity(Gravity.CENTER); msg.setPadding(dp(24),dp(24),dp(24),dp(24)); msg.setBackgroundColor(Color.WHITE); webHost.addView(msg,new FrameLayout.LayoutParams(-1,-1)); statusSuffix="Multi-profile feature unavailable"; refreshStatus();
     }
     private void showMessage(String message){ if(!isFinishing())new AlertDialog.Builder(this).setTitle("Orbit Browser").setMessage(message).setPositiveButton("OK",null).show(); }
-    @Override public void onDestroy(){ ticker.removeCallbacks(tick); if(webView!=null){webView.stopLoading();webView.loadUrl("about:blank");webView.destroy();webView=null;} super.onDestroy(); }
+    @Override public void onDestroy(){ ticker.removeCallbacks(tick); if(mailView!=null){mailView.stopLoading();mailView.loadUrl("about:blank");mailView.destroy();mailView=null;} if(webView!=null){webView.stopLoading();webView.loadUrl("about:blank");webView.destroy();webView=null;} super.onDestroy(); }
 }
