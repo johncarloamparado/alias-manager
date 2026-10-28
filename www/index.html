@@ -398,7 +398,7 @@
         <strong>Orbit Browser</strong>
         <span>Separate website profiles · one active page to save memory</span>
       </div>
-      <button class="btn btn-primary" id="btnOrbitBrowser">🌐 Open</button>
+      <div style="display:flex;gap:8px;flex:0 0 auto;"><button class="btn" id="btnOrbitNext" title="Open the next account that is ready">⏭ Next</button><button class="btn btn-primary" id="btnOrbitBrowser">🌐 Open</button></div>
     </section>
 
     <div class="install-banner" id="installBanner">
@@ -409,9 +409,9 @@
 
     <div class="stats-bar" id="statsBar">
       <div class="stat-card"><div class="stat-val" id="sTotal">0</div><div class="stat-label">Total</div></div>
-      <div class="stat-card"><div class="stat-val" id="sCurrent">0</div><div class="stat-label">Current</div></div>
-      <div class="stat-card"><div class="stat-val" id="sCooldown">0</div><div class="stat-label">Cooldown</div></div>
+      <div class="stat-card"><div class="stat-val" id="sCurrent">0</div><div class="stat-label">Running</div></div>
       <div class="stat-card"><div class="stat-val" id="sReady">0</div><div class="stat-label">Ready 5h+</div></div>
+      <div class="stat-card"><div class="stat-val" id="sCooldown">0</div><div class="stat-label">Not started</div></div>
     </div>
 
     <div class="toolbar">
@@ -423,8 +423,7 @@
 
     <div class="filters">
       <button class="filter-btn active" data-filter="all">All</button>
-      <button class="filter-btn" data-filter="current">Current</button>
-      <button class="filter-btn" data-filter="cooldown">Cooldown</button>
+      <button class="filter-btn" data-filter="running">Running</button>
       <button class="filter-btn" data-filter="ready">Ready (5h+)</button>
       <button class="filter-btn" data-filter="pinned">Pinned</button>
       <button class="filter-btn" data-filter="idle">Not started</button>
@@ -505,6 +504,13 @@
         </select>
       </div>
       <div class="sheet-row">
+        <label>Orbit auto-start timer</label>
+        <select id="orbitAutoStart">
+          <option value="1" selected>On (first chat starts timer)</option>
+          <option value="0">Off</option>
+        </select>
+      </div>
+      <div class="sheet-row">
         <label>Export / Import</label>
         <div style="display:flex;gap:6px;">
           <button class="btn" id="btnExport">Export</button>
@@ -537,7 +543,7 @@
     let selected = {};
     let selectedColor = "";
     let deferredPrompt = null;
-    let settings = { autoRefresh: 60, theme: "dark", readyAlert: 1, lastBackup: 0, alertedReady: {} };
+    let settings = { autoRefresh: 60, theme: "dark", readyAlert: 1, orbitAutoStart: 1, lastBackup: 0, alertedReady: {} };
 
     const listEl = document.getElementById("list");
     const emptyEl = document.getElementById("empty");
@@ -561,6 +567,7 @@
       document.getElementById("autoRefresh").value = String(settings.autoRefresh);
       document.getElementById("themeSelect").value = settings.theme;
       document.getElementById("readyAlert").value = String(settings.readyAlert);
+      document.getElementById("orbitAutoStart").value = String(settings.orbitAutoStart);
       startAutoRefresh();
     }
 
@@ -579,7 +586,7 @@
           aliases = JSON.parse(raw);
           if (!Array.isArray(aliases)) aliases = [];
           aliases.forEach(function (a) {
-            if (typeof a.isCurrent === "undefined") a.isCurrent = false;
+            a.isCurrent = false; // legacy field: no single "current" account any more
             if (!a.tags) a.tags = [];
             if (!a.history) a.history = [];
             if (typeof a.color === "undefined") a.color = "";
@@ -595,6 +602,7 @@
     function save() {
       try {
         localStorage.setItem(STORAGE_KEY, JSON.stringify(aliases));
+        if (typeof syncOrbitReminders === "function") syncOrbitReminders();
         return true;
       } catch (e) { toast("Save failed"); return false; }
     }
@@ -663,7 +671,7 @@
       if (!settings.readyAlert) return;
       var newly = [];
       aliases.forEach(function (a) {
-        if (!a.lastUsed || a.isCurrent) return;
+        if (!a.lastUsed) return;
         if ((Date.now() - a.lastUsed) < FIVE_H) return;
         var key = a.id + "_" + Math.floor(a.lastUsed / 60000);
         if (!settings.alertedReady[key]) {
@@ -692,8 +700,7 @@
       var filtered = aliases.slice();
       var fiveH = FIVE_H;
 
-      if (currentFilter === "current") filtered = filtered.filter(function (a) { return a.isCurrent; });
-      else if (currentFilter === "cooldown") filtered = filtered.filter(function (a) { return a.lastUsed && !a.isCurrent; });
+      if (currentFilter === "running") filtered = filtered.filter(function (a) { return a.lastUsed && (Date.now() - a.lastUsed) < fiveH; });
       else if (currentFilter === "ready") filtered = filtered.filter(function (a) { return a.lastUsed && (Date.now() - a.lastUsed) >= fiveH; });
       else if (currentFilter === "pinned") filtered = filtered.filter(function (a) { return a.pinned; });
       else if (currentFilter === "idle") filtered = filtered.filter(function (a) { return !a.lastUsed; });
@@ -713,8 +720,9 @@
         }
         if (sort === "newest") return (b.created || 0) - (a.created || 0);
         if (sort === "alpha") return (a.email || "").localeCompare(b.email || "");
-        if (a.isCurrent && !b.isCurrent) return -1;
-        if (!a.isCurrent && b.isCurrent) return 1;
+        var ar = a.lastUsed && (Date.now() - a.lastUsed) < FIVE_H, br = b.lastUsed && (Date.now() - b.lastUsed) < FIVE_H;
+        if (ar && !br) return -1;
+        if (!ar && br) return 1;
         if (a.pinned && !b.pinned) return -1;
         if (!a.pinned && b.pinned) return 1;
         return (b.lastUsed || b.created || 0) - (a.lastUsed || a.created || 0);
@@ -722,11 +730,9 @@
 
       var total = aliases.length, cur = 0, cd = 0, ready = 0;
       for (var i = 0; i < aliases.length; i++) {
-        if (aliases[i].isCurrent) cur++;
-        if (aliases[i].lastUsed && !aliases[i].isCurrent) {
-          cd++;
-          if (Date.now() - aliases[i].lastUsed >= fiveH) ready++;
-        }
+        if (!aliases[i].lastUsed) cd++;
+        else if (Date.now() - aliases[i].lastUsed < fiveH) cur++;
+        else ready++;
       }
       document.getElementById("sTotal").textContent = total;
       document.getElementById("sCurrent").textContent = cur;
@@ -746,7 +752,8 @@
         (function (a) {
           var card = document.createElement("div");
           var cls = "card";
-          if (a.isCurrent) cls += " current";
+          var isRunning = a.lastUsed && (Date.now() - a.lastUsed) < fiveH;
+          if (isRunning) cls += " current";
           else if (a.lastUsed) cls += " cooldown";
           if (a.pinned) cls += " pinned";
           if (selected[a.id]) cls += " selected";
@@ -755,7 +762,7 @@
 
           var isReady = a.lastUsed && (Date.now() - a.lastUsed) >= fiveH;
           var badge = "";
-          if (a.isCurrent) badge = '<span class="time-badge current">● Current · ' + timeAgo(a.lastUsed) + '</span>';
+          if (isRunning) badge = '<span class="time-badge current">● Running · ' + timeAgo(a.lastUsed) + '</span>';
           else if (isReady) badge = '<span class="time-badge ready">✓ Ready · ' + timeAgo(a.lastUsed) + '</span>';
           else if (a.lastUsed) badge = '<span class="time-badge cooldown">⏱ ' + timeAgo(a.lastUsed) + '</span>';
           else badge = '<span class="time-badge idle">Not started</span>';
@@ -785,6 +792,7 @@
             '<button class="action-btn start" data-action="start" data-id="' + a.id + '">▶ Start</button>' +
             '<button class="action-btn reset" data-action="reset" data-id="' + a.id + '">↺ Reset</button>' +
             '<button class="action-btn" data-action="copy" data-id="' + a.id + '">Copy</button>' +
+            '<button class="action-btn" data-action="orbit" data-id="' + a.id + '">🌐 Open</button>' +
             '<button class="action-btn pin' + (a.pinned ? ' active' : '') + '" data-action="pin" data-id="' + a.id + '">' + (a.pinned ? '★ Pinned' : '☆ Pin') + '</button>' +
             '<button class="action-btn" data-action="edit" data-id="' + a.id + '">Edit</button>' +
             '<button class="action-btn delete" data-action="delete" data-id="' + a.id + '">Delete</button>' +
@@ -848,7 +856,7 @@
     document.getElementById("bulkReset").addEventListener("click", function () {
       selectedIds().forEach(function (id) {
         var a = aliases.find(function (x) { return x.id === id; });
-        if (a) { a.lastUsed = null; a.isCurrent = false; }
+        if (a) { a.lastUsed = null; }
       });
       save(); render(); toast("Reset selected");
     });
@@ -932,17 +940,16 @@
       if (!item) return;
 
       if (action === "start") {
-        aliases.forEach(function (a) { a.isCurrent = false; });
-        item.isCurrent = true;
         item.lastUsed = Date.now();
         if (!item.history) item.history = [];
         item.history.push(Date.now());
         if (item.history.length > 10) item.history = item.history.slice(-10);
         save(); render();
-        toast("Now current · timer started", "success");
+        toast("Timer started · other accounts unaffected", "success");
       }
+      if (action === "orbit") { openOrbit(item.id); }
       if (action === "reset") {
-        item.lastUsed = null; item.isCurrent = false;
+        item.lastUsed = null;
         save(); render(); toast("Time reset");
       }
       if (action === "copy") {
@@ -1004,8 +1011,12 @@
     document.getElementById("themeSelect").addEventListener("change", function (e) {
       settings.theme = e.target.value; saveSettings(); applyTheme();
     });
+    document.getElementById("orbitAutoStart").addEventListener("change", function (e) {
+      settings.orbitAutoStart = Number(e.target.value); saveSettings();
+      toast(settings.orbitAutoStart ? "Orbit auto-start on" : "Orbit auto-start off (use ▶ Start yourself)");
+    });
     document.getElementById("readyAlert").addEventListener("change", function (e) {
-      settings.readyAlert = Number(e.target.value); saveSettings();
+      settings.readyAlert = Number(e.target.value); saveSettings(); syncOrbitReminders();
       toast(settings.readyAlert ? "Ready alerts on" : "Ready alerts off");
     });
 
@@ -1035,7 +1046,7 @@
             return {
               id: item.id || Date.now().toString(36) + Math.random().toString(36).slice(2, 7),
               email: item.email || "", note: item.note || "", tags: item.tags || [],
-              color: item.color || "", pinned: !!item.pinned, isCurrent: !!item.isCurrent,
+              color: item.color || "", pinned: !!item.pinned, isCurrent: false,
               created: item.created || Date.now(), lastUsed: item.lastUsed || null,
               history: item.history || []
             };
@@ -1083,21 +1094,99 @@
 
 
     // Native Android browser integration. Isolated profiles require the installed Android WebView to support MULTI_PROFILE.
-    document.getElementById("btnOrbitBrowser").addEventListener("click", async function () {
+    // Open Orbit. If aliasId is given, Orbit starts on the profile linked to that alias.
+    async function openOrbit(aliasId) {
       try {
         const plugin = window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.OrbitBrowser;
         if (plugin && typeof plugin.open === "function") {
-          await plugin.open();
+          await plugin.open({ aliasId: aliasId || "", autoStart: !!settings.orbitAutoStart, aliases: aliases.map(function (a) { return { id: a.id, email: a.email, lastUsed: a.lastUsed || 0 }; }) });
         } else {
           toast("Orbit Browser works in the installed Android APK. Build the updated project first.", "error");
         }
       } catch (err) {
         toast("Could not open Orbit Browser: " + (err && err.message ? err.message : "unknown error"), "error");
       }
+    }
+    document.getElementById("btnOrbitBrowser").addEventListener("click", function () { openOrbit(""); });
+
+    // "Next available": an account that is usable now (never started, or 5h are over). Oldest first.
+    // If none is available, say which one finishes first.
+    function nextAvailableAlias() {
+      var now = Date.now(), best = null, soonest = null;
+      aliases.forEach(function (a) {
+        if (!a.lastUsed || now - a.lastUsed >= FIVE_H) {
+          if (!best || (a.lastUsed || 0) < (best.lastUsed || 0)) best = a;
+        } else if (!soonest || a.lastUsed < soonest.lastUsed) soonest = a;
+      });
+      return { best: best, soonest: soonest };
+    }
+    document.getElementById("btnOrbitNext").addEventListener("click", function () {
+      var r = nextAvailableAlias();
+      if (r.best) { toast("Next: " + (r.best.note || r.best.email), "success"); openOrbit(r.best.id); return; }
+      if (r.soonest) {
+        var mins = Math.max(1, Math.ceil((r.soonest.lastUsed + FIVE_H - Date.now()) / 60000));
+        toast("None ready. " + (r.soonest.note || r.soonest.email) + " is ready in " + Math.floor(mins / 60) + "h " + (mins % 60) + "m");
+      } else toast("No accounts yet. Add one first.");
     });
+
+    // ---- Orbit: first chat detected in the native browser -> start that alias's timer ----
+    // Rule: only start if the alias is not already Running (<5h), so a 2nd chat never resets the timer.
+    function isNativeApp() {
+      return !!(window.Capacitor && typeof window.Capacitor.isNativePlatform === "function" && window.Capacitor.isNativePlatform());
+    }
+    var drainingOrbit = false;
+    async function drainOrbitEvents() {
+      if (drainingOrbit || !isNativeApp()) return;
+      var plugin = window.Capacitor.Plugins && window.Capacitor.Plugins.OrbitBrowser;
+      if (!plugin || typeof plugin.consumeEvents !== "function") return;
+      drainingOrbit = true;
+      try {
+        var res = await plugin.consumeEvents();
+        var evs = (settings.orbitAutoStart ? ((res && res.events) || []) : []).slice().sort(function (x, y) { return (x.ts || 0) - (y.ts || 0); });
+        var started = [];
+        evs.forEach(function (ev) {
+          var a = aliases.find(function (x) { return x.id === ev.aliasId; });
+          if (!a) return;
+          var ts = ev.ts || Date.now();
+          if (a.lastUsed && (ts - a.lastUsed) < FIVE_H) return; // already running
+          a.lastUsed = ts;
+          if (!a.history) a.history = [];
+          a.history.push(ts);
+          if (a.history.length > 10) a.history = a.history.slice(-10);
+          started.push(a.note || a.email);
+        });
+        if (started.length) {
+          save(); render();
+          toast("▶ Timer auto-started: " + started.join(", "), "success");
+        }
+      } catch (e) { /* plugin unavailable: ignore */ }
+      drainingOrbit = false;
+    }
+    // Tell Android when each running timer ends, so it can show a "Ready" notification.
+    var reminderTimer = null;
+    function syncOrbitReminders() {
+      clearTimeout(reminderTimer);
+      reminderTimer = setTimeout(async function () {
+        if (!isNativeApp()) return;
+        var plugin = window.Capacitor.Plugins && window.Capacitor.Plugins.OrbitBrowser;
+        if (!plugin || typeof plugin.scheduleReminders !== "function") return;
+        var now = Date.now();
+        var list = settings.readyAlert ? aliases.filter(function (a) { return a.lastUsed && a.lastUsed + FIVE_H > now; })
+          .map(function (a) { return { id: a.id, label: a.note || a.email, at: a.lastUsed + FIVE_H }; }) : [];
+        try {
+          var r = await plugin.scheduleReminders({ reminders: list });
+          if (r && r.notificationsAllowed === false) toast("Allow notifications to get 'Ready' alerts", "error");
+        } catch (e) { /* ignore */ }
+      }, 800);
+    }
+    document.addEventListener("visibilitychange", function () { if (!document.hidden) drainOrbitEvents(); });
+    window.addEventListener("focus", drainOrbitEvents);
+    setInterval(function () { if (!document.hidden) drainOrbitEvents(); }, 4000);
 
     loadSettings();
     load();
+    drainOrbitEvents();
+    syncOrbitReminders();
   </script>
 
   <script>
