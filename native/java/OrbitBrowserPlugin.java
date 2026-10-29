@@ -65,6 +65,43 @@ public class OrbitBrowserPlugin extends Plugin {
         }
     }
 
+    /** Orbit's own settings for the Alias Manager backup file: profiles, which alias each profile uses, colors/emoji, WebView keys. */
+    @PluginMethod
+    public void getBackup(PluginCall call) {
+        try {
+            SharedPreferences p = getContext().getSharedPreferences("orbit_profiles", Context.MODE_PRIVATE);
+            JSObject ret = new JSObject();
+            ret.put("profiles", p.getString("profiles", "Account 1"));
+            ret.put("active", p.getString("active", ""));
+            ret.put("links", new JSObject(p.getString("links", "{}")));
+            ret.put("styles", new JSObject(p.getString("styles", "{}")));
+            ret.put("keys", new JSObject(p.getString("keys", "{}")));
+            call.resolve(ret);
+        } catch (Exception e) {
+            call.reject("Unable to read Orbit backup: " + e.getMessage());
+        }
+    }
+
+    /** Puts a backup made by getBackup() back. Cookies/logins are NOT part of it (they cannot be backed up). */
+    @PluginMethod
+    public void restoreBackup(PluginCall call) {
+        try {
+            String profiles = call.getString("profiles", "");
+            if (profiles == null || profiles.trim().isEmpty()) { call.resolve(); return; }
+            SharedPreferences.Editor ed = getContext().getSharedPreferences("orbit_profiles", Context.MODE_PRIVATE).edit();
+            ed.putString("profiles", profiles);
+            String active = call.getString("active", "");
+            if (active != null && !active.isEmpty()) ed.putString("active", active);
+            JSObject links = call.getObject("links"); if (links != null) ed.putString("links", links.toString());
+            JSObject styles = call.getObject("styles"); if (styles != null) ed.putString("styles", styles.toString());
+            JSObject keys = call.getObject("keys"); if (keys != null) ed.putString("keys", keys.toString());
+            ed.commit();
+            call.resolve();
+        } catch (Exception e) {
+            call.reject("Unable to restore Orbit backup: " + e.getMessage());
+        }
+    }
+
     @PluginMethod
     public void open(PluginCall call) {
         try {
