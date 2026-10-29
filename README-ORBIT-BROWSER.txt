@@ -65,3 +65,30 @@ Auto-start toggle
 -----------------
 Alias Manager > Settings > "Orbit auto-start timer" (On/Off). When Off, Orbit still remembers chats it sees
 but does not start any timer (the toolbar shows "auto-start OFF"). Use "▶ Start" manually.
+
+
+Step 8 additions
+- Alias list: Alias Manager keeps a saved copy for Orbit (syncAliases), so the 🔗 Alias menu always has your emails.
+- ✉ button: Gmail in its own isolated profile. claude.ai links tapped in Gmail open in the active Claude profile.
+  Google may refuse sign-in inside an embedded WebView; this app does not try to disguise itself.
+- claude.ai/login: the linked alias is filled into the email box (you tap Continue).
+- Compact toolbar; ⋯ > Hide address bar for even more room.
+- Delete profile: removed at once; its data is erased with retries, or at the next Orbit start.
+- Chat detected with no alias linked: asks which alias, then starts that alias timer.
+- 🌐 Open only appears for aliases that are logged in (or were started before).
+
+Step 9 additions
+----------------
+- Tab labels: a profile still named "Account N" shows its linked alias (note, or the part before @). A profile you
+  renamed keeps your name.
+- ⋯ > "Sign out (keep this tab)": erases that profile's cookies/site data only; the tab, alias link and color stay.
+  The alias's 🌐 Open button is hidden until you log in again.
+- Limit detection (user-requested; follows Settings > Orbit auto-start): every 10 s, while the Claude page you are
+  looking at is open on a profile with a linked alias, Orbit checks the page text for a "you've reached your limit"
+  line. Only that one line (max 300 chars) is looked at; nothing else is read or stored. If a reset time can be read
+  ("in 2 hours 10 minutes" / "at 3:30 PM", within the next 5 h) the alias becomes Running and Ready exactly then,
+  with a notification; otherwise it is marked Running from now. A chat that merely TALKS about usage limits could
+  trigger it by mistake - use ↺ Reset on the card if that happens.
+- Backup: Settings > Export now writes {aliases, orbit}. orbit = profiles, which alias each profile uses, colors,
+  emoji, WebView keys. Import restores them too (old plain-list backups still import). Logins/cookies are NOT in
+  the backup - after a reinstall you sign in again, but the links come back.
