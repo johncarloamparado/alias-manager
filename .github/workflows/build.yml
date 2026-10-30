@@ -16,6 +16,18 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      # PERMANENT RULE: the repo root holds exactly ONE source zip named Alias_Manager_src.zip (replace it on every update).
+      - name: Unpack Alias_Manager_src.zip
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ ! -f Alias_Manager_src.zip ]; then
+            if [ -f www/index.html ]; then echo "No zip in root; using files already in the repo."; exit 0; fi
+            echo "ERROR: Alias_Manager_src.zip not found in the repo root"; exit 1
+          fi
+          unzip -q -o Alias_Manager_src.zip
+          ls
+
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
@@ -90,7 +102,7 @@ jobs:
           grep -c "btnOrbitBrowser" assets/public/index.html
           grep -o 'const CACHE = "[^"]*"' assets/public/sw.js
           echo "--- native check (dex)"
-          for c in OrbitBrowserPlugin OrbitBrowserActivity OrbitReminderReceiver; do
+          for c in OrbitBrowserPlugin OrbitBrowserActivity OrbitReminderReceiver OrbitWidgetProvider; do
             cat classes*.dex | grep -a -q "$c" && echo "found $c in dex" || { echo "MISSING $c in dex"; exit 1; }
           done
 
