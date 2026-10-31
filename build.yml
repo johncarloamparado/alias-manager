@@ -1,0 +1,120 @@
+name: Compile Android APK
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main, master]
+
+permissions:
+  contents: read
+
+jobs:
+  build-apk:
+    name: Build Alias Manager APK
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # PERMANENT RULE: the repo root holds exactly ONE source zip named Alias_Manager_src.zip (replace it on every update).
+      - name: Unpack Alias_Manager_src.zip
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ ! -f Alias_Manager_src.zip ]; then
+            if [ -f www/index.html ]; then echo "No zip in root; using files already in the repo."; exit 0; fi
+            echo "ERROR: Alias_Manager_src.zip not found in the repo root"; exit 1
+          fi
+          unzip -q -o Alias_Manager_src.zip
+          ls
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      # Let the next step accept SDK licenses explicitly, non-interactively.
+      - name: Set up Android SDK tools
+        uses: android-actions/setup-android@v4
+        with:
+          accept-android-sdk-licenses: 'false'
+          log-accepted-android-sdk-licenses: 'false'
+          packages: ''
+
+      - name: Accept Android SDK licenses and install build packages
+        shell: bash
+        run: |
+          set +o pipefail
+          yes | sdkmanager --licenses
+          sdkmanager \
+            "platform-tools" \
+            "platforms;android-35" \
+            "build-tools;35.0.0"
+
+      - name: Validate project files
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -f package.json
+          test -f capacitor.config.json
+          test -f www/index.html
+          test -f assets/icon.png
+
+      - name: Install JavaScript dependencies
+        run: npm install --no-audit --no-fund
+
+      - name: Create Android project if missing
+        shell: bash
+        run: |
+          if [ ! -d android ]; then
+            npx cap add android
+          fi
+
+      - name: Generate Android app assets
+        run: npx capacitor-assets generate --android
+
+      - name: Sync web app to Android
+        run: npx cap sync android
+
+      - name: Install Orbit multi-profile browser integration
+        run: python3 native_patch.py
+
+      - name: Build debug APK
+        shell: bash
+        run: |
+          cd android
+          chmod +x gradlew
+          ./gradlew assembleDebug --no-daemon
+
+      - name: Prove the APK contains the latest UI and Orbit native code
+        shell: bash
+        run: |
+          set -euo pipefail
+          APK=android/app/build/outputs/apk/debug/app-debug.apk
+          mkdir -p /tmp/apkcheck && cd /tmp/apkcheck && unzip -q -o "$GITHUB_WORKSPACE/$APK"
+          echo "--- UI check (assets/public/index.html)"
+          grep -c "btnOrbitBrowser" assets/public/index.html
+          grep -o 'const CACHE = "[^"]*"' assets/public/sw.js
+          echo "--- AI icons + logo check"
+          for f in claude chatgpt gemini grok perplexity deepseek mistral; do
+            test -f "assets/public/ai/$f.png" && echo "found ai/$f.png" || { echo "MISSING ai/$f.png"; exit 1; }
+          done
+          test -f assets/public/logo-192.png && echo "found logo-192.png" || { echo "MISSING logo-192.png"; exit 1; }
+          echo "--- native check (dex)"
+          for c in OrbitBrowserPlugin OrbitBrowserActivity OrbitReminderReceiver OrbitWidgetProvider; do
+            cat classes*.dex | grep -a -q "$c" && echo "found $c in dex" || { echo "MISSING $c in dex"; exit 1; }
+          done
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: alias-manager-debug-apk
+          path: android/app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
+          retention-days: 30
