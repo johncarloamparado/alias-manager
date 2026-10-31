@@ -65,6 +65,8 @@ jobs:
           test -f capacitor.config.json
           test -f www/index.html
           test -f assets/icon.png
+          test -f assets/icon-foreground.png
+          test -f assets/icon-background.png
 
       - name: Install JavaScript dependencies
         run: npm install --no-audit --no-fund
@@ -107,7 +109,7 @@ jobs:
           done
           test -f assets/public/logo-192.png && echo "found logo-192.png" || { echo "MISSING logo-192.png"; exit 1; }
           echo "--- native check (dex)"
-          for c in OrbitBrowserPlugin OrbitBrowserActivity OrbitReminderReceiver OrbitWidgetProvider; do
+          for c in OrbitBrowserPlugin OrbitBrowserActivity OrbitReminderReceiver OrbitWidgetProvider OrbitKeepAliveService; do
             cat classes*.dex | grep -a -q "$c" && echo "found $c in dex" || { echo "MISSING $c in dex"; exit 1; }
           done
 
